@@ -149,11 +149,11 @@ class StagedSearch:
             objective=view.objective,
             anchor_id=view.anchor_id,
         )
+        global_ranking = self.ranker(global_input)
         reached_ceiling = False
         if isinstance(view.objective, dict):
             ceiling = score_ceiling(view.objective)
             if ceiling is not None:
-                global_ranking = self.ranker(global_input)
                 configuration = cast(dict[str, Any], view.objective)
                 precision = configuration["definition"]["comparisonPrecision"]
                 reached_ceiling = any(
@@ -208,7 +208,9 @@ class StagedSearch:
                 )
         remaining_rounds = max(1, view.budget.rounds - integer(state.data["round"]))
         quota = max(1, view.budget.candidates_remaining // remaining_rounds)
-        parent_input = ParentInput(tuple(eligible), quota, view.anchor_id)
+        parent_input = ParentInput(
+            tuple(eligible), quota, self._seed_champion(view, global_ranking)
+        )
         plan = self.parent_policy(parent_input, self._rng(view))
         validate_parent_plan(parent_input, plan)
         research = ResearchRecord(
@@ -616,6 +618,50 @@ class StagedSearch:
                 scores[parent], precision
             )
         return scores[candidate] >= scores[parent]
+
+    @staticmethod
+    def _seed_champion(view: SearchView, ranked: RankingPlan) -> str:
+        """Return the best complete global-seed candidate that strictly beats the anchor."""
+        anchor = view.anchor_id
+        scores = dict(ranked.scores)
+        if anchor not in scores:
+            return anchor
+        if anchor in ranked.disqualified:
+            return next(
+                (
+                    candidate
+                    for candidate in ranked.candidate_ids
+                    if candidate != anchor and candidate not in ranked.disqualified
+                ),
+                anchor,
+            )
+        precision = (
+            cast(dict[str, Any], view.objective)["definition"]["comparisonPrecision"]
+            if isinstance(view.objective, dict)
+            else None
+        )
+        anchor_score = (
+            comparison_key(scores[anchor], precision) if precision is not None else scores[anchor]
+        )
+
+        def better(score: float) -> bool:
+            return (
+                comparison_key(score, precision) > anchor_score
+                if precision is not None
+                else score > anchor_score
+            )
+
+        return next(
+            (
+                candidate
+                for candidate in ranked.candidate_ids
+                if candidate != anchor
+                and candidate not in ranked.disqualified
+                and candidate in scores
+                and better(scores[candidate])
+            ),
+            anchor,
+        )
 
     @staticmethod
     def _all_tasks(view: SearchView) -> tuple[str, ...]:

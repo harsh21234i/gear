@@ -136,6 +136,8 @@ class Selection:
 
 @dataclass(frozen=True)
 class ParentInput:
+    """Eligible seed parents and the best complete seed candidate that beats the anchor."""
+
     eligible: tuple[ParentOption, ...]
     candidate_limit: int
     champion_id: str

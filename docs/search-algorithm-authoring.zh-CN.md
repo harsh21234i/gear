@@ -98,7 +98,7 @@ Notebook 使用 `await project.arefine(...)`。同步方法在已有事件循环
 
 `Budget.generation_requests_remaining` 和 `generation_tokens_remaining` 是扣除持久预约后的 Meta 余量，`None` 表示该维度没有总上限。`generation_batch_capacity` 是当前可完整预约的 Meta 操作数，`None` 表示不受总额度限制。默认流程在额度耗尽时停止新的诊断/生成，但仍可提名已有完整评测的候选；提案数受批次容量约束。core 独立校验，不信任自定义算法自行限制调用。
 
-默认 GEPA 按任务前沿成员分配父代概率，去除可由其他成员覆盖的冗余前沿，支持 `ScopedFrontier` 的多批采样及 champion 混合。local 使用 8% local、4% shared、3% cross 的向上取整数量及 0.6/0.25/0.15 分桶权重；bridge 保留既有 scope 后分层补到 40%，global 使用完整 seed。容量不足会给出原因，不偷偷扩大预算。配置这些规则可直接替换 callable dataclass：
+默认 GEPA 按任务前沿成员分配父代概率，去除可由其他成员覆盖的冗余前沿，支持 `ScopedFrontier` 的多批采样及 champion 混合。混合中的 champion 是完整 global seed 证据下严格优于 run anchor 的最高排名候选；约束优先级和 `comparisonPrecision` 与排名规则一致，若没有严格改进（包括精度范围内的平分），则使用 anchor。held-out 证据不参与 parent sampling。local 使用 8% local、4% shared、3% cross 的向上取整数量及 0.6/0.25/0.15 分桶权重；bridge 保留既有 scope 后分层补到 40%，global 使用完整 seed。容量不足会给出原因，不偷偷扩大预算。配置这些规则可直接替换 callable dataclass：
 
 ```python
 from gear.algorithms import GEPA

@@ -8,6 +8,104 @@ from gear.refine.protocol import validate
 
 
 class AlgorithmTests(unittest.TestCase):
+    def test_gepa_champion_mix_uses_the_improved_complete_seed_candidate(self):
+        from gear.algorithms import AlgorithmState, Budget, Candidate, SearchView, Task
+        from gear.algorithms.contracts import Evidence
+        from gear.algorithms.gepa.parents import ScopedFrontier
+
+        tasks = tuple(Task(task, "task") for task in ("a", "b", "c", "d"))
+        candidates = (
+            Candidate("anchor", digest("anchor")),
+            Candidate("leader", digest("leader"), "anchor"),
+        )
+        evidence = tuple(
+            Evidence(candidate, task, 0, score, "valid", "global")
+            for candidate, scores in (
+                ("anchor", (0.0, 1.0, 0.0, 0.0)),
+                ("leader", (1.0, 1.0, 0.0, 0.0)),
+            )
+            for task, score in zip(("a", "b", "c", "d"), scores)
+        )
+        view = SearchView(
+            "multi-round",
+            7,
+            "fixed",
+            tasks,
+            candidates,
+            evidence,
+            (),
+            Budget(100, 4, 4),
+            "anchor",
+        )
+        decision = GEPA(parent_policy=ScopedFrontier(champion_probability=1.0)).step(
+            view, AlgorithmState(data={"phase": "parents", "round": 2})
+        )
+
+        parents = next(record for record in decision.research if record.kind == "parents")
+        selected = parents.data["plan"]["allocations"][0]["selection"]["option"]["candidate_id"]
+        self.assertEqual(selected, "leader")
+
+    def test_seed_champion_keeps_anchor_for_ties_and_ineligible_candidates(self):
+        from gear.algorithms import Budget, Candidate, SearchView
+        from gear.algorithms.contracts import RankingPlan, Task
+        from gear.algorithms.workflow import StagedSearch
+
+        view = SearchView(
+            "seed-champion",
+            0,
+            "fixed",
+            (Task("a", "task"),),
+            (Candidate("anchor", digest("anchor")), Candidate("leader", digest("leader"))),
+            (),
+            (),
+            Budget(10, 2, 2),
+            "anchor",
+            {"definition": {"comparisonPrecision": 0.01}},
+        )
+        tied = RankingPlan(("leader", "anchor"), (("leader", 0.704), ("anchor", 0.7)), ())
+        self.assertEqual(StagedSearch._seed_champion(view, tied), "anchor")
+
+        repaired = RankingPlan(
+            ("leader", "anchor"), (("leader", 0.2), ("anchor", 0.9)), (), ("anchor",)
+        )
+        self.assertEqual(StagedSearch._seed_champion(view, repaired), "leader")
+
+        disqualified = RankingPlan(
+            ("anchor", "leader"), (("anchor", 0.7), ("leader", 0.9)), (), ("leader",)
+        )
+        self.assertEqual(StagedSearch._seed_champion(view, disqualified), "anchor")
+
+        incomplete = RankingPlan(("anchor",), (("anchor", 0.7),), ("leader",))
+        self.assertEqual(StagedSearch._seed_champion(view, incomplete), "anchor")
+
+    def test_champion_probability_zero_and_one_boundaries(self):
+        from gear.algorithms.contracts import ParentInput, ParentOption
+        from gear.algorithms.gepa.parents import ScopedFrontier
+        from gear.algorithms.random import DeterministicRandom
+
+        eligible = (
+            ParentOption("anchor", "global", ("a", "b"), 0.5, task_scores=(("a", 1), ("b", 0))),
+            ParentOption("leader", "global", ("a", "b"), 0.5, task_scores=(("a", 0), ("b", 1))),
+        )
+        view = ParentInput(eligible, 1, "leader")
+        no_mixture = ScopedFrontier(champion_probability=0.0)(view, DeterministicRandom("same"))
+        full_champion = ScopedFrontier(champion_probability=1.0)(view, DeterministicRandom("same"))
+
+        self.assertEqual(
+            dict(no_mixture.allocations[0].selection.probabilities),
+            {
+                "global:anchor": 0.5,
+                "global:leader": 0.5,
+            },
+        )
+        self.assertEqual(
+            dict(full_champion.allocations[0].selection.probabilities),
+            {
+                "global:anchor": 0.0,
+                "global:leader": 1.0,
+            },
+        )
+
     def test_large_candidate_allocations_finish_without_dropping_candidates(self):
         from gear.algorithms import SearchView, Budget, Candidate, Task, AlgorithmState
         from gear.algorithms.contracts import OperationResult
